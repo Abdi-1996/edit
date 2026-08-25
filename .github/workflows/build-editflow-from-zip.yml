@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "**/*.zip"
+      - "**/*.zip.part-*"
       - ".github/workflows/build-editflow-from-zip.yml"
 
 permissions:
@@ -14,13 +15,13 @@ jobs:
   build-ipa:
     name: Build unsigned IPA
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and unpack EditFlow ZIP
+      - name: Find, assemble and unpack EditFlow ZIP
         id: unpack
         shell: bash
         run: |
@@ -32,9 +33,32 @@ jobs:
           fi
 
           if [[ -z "$ZIP_FILE" ]]; then
-            echo "::error::ZIP file was not found in the repository root."
-            exit 1
+            FIRST_PART="$(find . -maxdepth 4 -type f -iname 'EditFlow*.zip.part-*' -print | sort | head -n 1)"
+            if [[ -z "$FIRST_PART" ]]; then
+              FIRST_PART="$(find . -maxdepth 4 -type f -iname '*.zip.part-*' -print | sort | head -n 1)"
+            fi
+
+            if [[ -z "$FIRST_PART" ]]; then
+              echo "::error::Neither a ZIP file nor ZIP parts were found."
+              exit 1
+            fi
+
+            PART_PREFIX="${FIRST_PART%.part-*}"
+            PART_DIR="$(dirname "$FIRST_PART")"
+            PART_NAME="$(basename "$PART_PREFIX")"
+            mapfile -t ZIP_PARTS < <(find "$PART_DIR" -maxdepth 1 -type f -name "$PART_NAME.part-*" -print | sort)
+
+            if (( ${#ZIP_PARTS[@]} < 2 )); then
+              echo "::error::Only one archive part was found. Upload every .zip.part-* file first."
+              exit 1
+            fi
+
+            ZIP_FILE="$RUNNER_TEMP/$PART_NAME"
+            cat "${ZIP_PARTS[@]}" > "$ZIP_FILE"
+            echo "Assembled ${#ZIP_PARTS[@]} archive parts into $ZIP_FILE"
           fi
+
+          unzip -tq "$ZIP_FILE"
 
           SOURCE_DIR="$RUNNER_TEMP/editflow-source"
           rm -rf "$SOURCE_DIR"
@@ -68,6 +92,8 @@ jobs:
         working-directory: ${{ steps.unpack.outputs.project_root }}
         run: |
           set -euo pipefail
+          test -s EditFlow/Resources/Models/RealESRGAN_x4plus.mlpackage/Data/com.apple.CoreML/weights/weight.bin
+          test -s EditFlow/Resources/Models/realesr-general-x4v3.mlpackage/Data/com.apple.CoreML/weights/weight.bin
           xcodegen generate
           test -d EditFlow.xcodeproj
           xcodebuild -list -project EditFlow.xcodeproj
