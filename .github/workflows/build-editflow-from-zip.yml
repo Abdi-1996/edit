@@ -46,7 +46,10 @@ jobs:
             PART_PREFIX="${FIRST_PART%.part-*}"
             PART_DIR="$(dirname "$FIRST_PART")"
             PART_NAME="$(basename "$PART_PREFIX")"
-            mapfile -t ZIP_PARTS < <(find "$PART_DIR" -maxdepth 1 -type f -name "$PART_NAME.part-*" -print | sort)
+            ZIP_PARTS=()
+            while IFS= read -r PART_FILE; do
+              ZIP_PARTS+=("$PART_FILE")
+            done < <(find "$PART_DIR" -maxdepth 1 -type f -name "$PART_NAME.part-*" -print | sort)
 
             if (( ${#ZIP_PARTS[@]} < 2 )); then
               echo "::error::Only one archive part was found. Upload every .zip.part-* file first."
