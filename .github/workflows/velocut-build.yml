@@ -35,6 +35,9 @@ jobs:
       - name: Patch v0.4.4 curve UI
         run: python3 VeloCutAI/patch_v044_curve_ui.py
 
+      - name: Patch v0.4.4 compile fixes
+        run: python3 VeloCutAI/patch_v044_compile.py
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
