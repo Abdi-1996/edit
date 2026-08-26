@@ -16,6 +16,53 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Fix v0.5 Swift source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('VeloCutAI/VeloCutV05/VeloCutV05.swift')
+          s = p.read_text()
+          replacement = r'''
+    var curveEditor: some View {
+        Group {
+            if let c = model.clip {
+                VStack(spacing: 8) {
+                    HStack {
+                        Text("Редактор кривой").font(.headline)
+                        Spacer()
+                        Button { model.addPoint() } label: { Label("Точка", systemImage: "plus.circle") }
+                        Button { model.showCurveEditor = false } label: { Image(systemName: "xmark.circle.fill") }
+                    }
+                    Slider(value: Binding(get: { model.playhead }, set: { model.seek($0) }), in: c.trimStart...c.trimEnd)
+                    HStack {
+                        Text(format(c.trimStart)); Spacer(); Text(format(model.playhead)); Spacer(); Text(format(c.trimEnd))
+                    }
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    CurveGraphV5(
+                        points: c.sortedPoints,
+                        selected: $model.selectedPointID,
+                        onMove: { id, t, speed in model.movePoint(id: id, t: t, speed: speed) },
+                        onAdd: { t in
+                            model.seek(c.trimStart + t * c.sourceDuration)
+                            model.addPoint(at: t)
+                        }
+                    )
+                    .frame(height: 180)
+                }
+                .padding(12)
+                .background(.regularMaterial)
+            } else {
+                EmptyView()
+            }
+        }
+    }
+'''
+          s = re.sub(r'^    var curveEditor: some View .*$', replacement.rstrip(), s, count=1, flags=re.M)
+          p.write_text(s)
+          PY
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
