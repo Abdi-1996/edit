@@ -5,6 +5,10 @@ on:
   push:
     branches: [ velocut-build ]
 
+concurrency:
+  group: velocut-build
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
