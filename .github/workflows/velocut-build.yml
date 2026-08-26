@@ -53,6 +53,9 @@ jobs:
       - name: Restore stable v0.4.6 curve editor
         run: python3 VeloCutAI/patch_v046_curve_stability.py
 
+      - name: Fix v0.4.7 patch matcher
+        run: python3 VeloCutAI/patch_v047_matcher_fix.py
+
       - name: Patch v0.4.7 clean UI and saved curves
         run: python3 VeloCutAI/patch_v047_clean_ui.py
 
