@@ -6,7 +6,7 @@ on:
     branches: [ velocut-build ]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -16,24 +16,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fix Xcode 16 async seek and persist
+      - name: Apply v0.4 source hotfixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('VeloCutAI/VeloCutAI/VeloCutAIApp.swift')
-          text = path.read_text()
-          old = '            player.seek(to: CMTime(seconds: safe, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)'
-          new = '            await player.seek(to: CMTime(seconds: safe, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)'
-          if old in text:
-              path.write_text(text.replace(old, new, 1))
+          p = Path('VeloCutAI/VeloCutAI/VeloCutV4.swift')
+          s = p.read_text()
+          s = s.replace('min(max(value, 0, ), 2)', 'min(max(value, 0), 2)')
+          s = s.replace(',-.35...35)', ',-0.35...0.35)')
+          p.write_text(s)
           PY
-          if ! git diff --quiet; then
-            git config user.name "VeloCut Build Bot"
-            git config user.email "actions@users.noreply.github.com"
-            git add VeloCutAI/VeloCutAI/VeloCutAIApp.swift
-            git commit -m "Fix Xcode async seek [skip ci]"
-            git push origin HEAD:velocut-build
-          fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -66,11 +58,11 @@ jobs:
           rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -qry VeloCutAI-unsigned.ipa Payload
+          zip -qry VeloCutAI-v0.4-unsigned.ipa Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VeloCutAI-v0.3-unsigned-ipa
-          path: VeloCutAI/VeloCutAI-unsigned.ipa
+          name: VeloCutAI-v0.4-unsigned-ipa
+          path: VeloCutAI/VeloCutAI-v0.4-unsigned.ipa
           if-no-files-found: error
