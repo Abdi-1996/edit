@@ -5,37 +5,43 @@ import Foundation
 // Extra editing interactions layered on top of the original v0.4 editor.
 extension EditorViewModel {
     func beginInteractiveEdit() {
+        player.pause()
+        isPlaying = false
         registerUndo()
+    }
+
+    func finishInteractiveEdit() {
+        projectTime = min(max(0, projectTime), projectDuration)
+        schedulePreview(immediate: true)
     }
 
     func setTrimStartInteractive(_ id: UUID, _ value: Double) {
         guard let i = clips.firstIndex(where: { $0.id == id }) else { return }
+        objectWillChange.send()
         clips[i].trimStart = min(max(0, value), clips[i].trimEnd - 0.05)
         selectedClipID = id
-        projectTime = min(projectTime, projectDuration)
-        schedulePreview()
+        // Do not rebuild AVFoundation composition while the finger is moving.
     }
 
     func setTrimEndInteractive(_ id: UUID, _ value: Double) {
         guard let i = clips.firstIndex(where: { $0.id == id }) else { return }
+        objectWillChange.send()
         clips[i].trimEnd = max(min(clips[i].duration, value), clips[i].trimStart + 0.05)
         selectedClipID = id
-        projectTime = min(projectTime, projectDuration)
-        schedulePreview()
     }
 
     func setSpeedFXStartInteractive(_ id: UUID, start: Double, duration: Double) {
         guard let i = speedFX.firstIndex(where: { $0.id == id }) else { return }
+        objectWillChange.send()
         let safeDuration = max(0.08, duration)
         speedFX[i].start = max(0, start)
         speedFX[i].duration = safeDuration
-        schedulePreview()
     }
 
     func setSpeedFXDurationInteractive(_ id: UUID, _ duration: Double) {
         guard let i = speedFX.firstIndex(where: { $0.id == id }) else { return }
+        objectWillChange.send()
         speedFX[i].duration = min(max(duration, 0.08), 8)
-        schedulePreview()
     }
 
     func seekCurveTarget(_ target: CurveTarget, normalized: Double) {
@@ -50,6 +56,18 @@ extension EditorViewModel {
         }
     }
 
+    func setCurvePlayheadVisual(_ target: CurveTarget, normalized: Double) {
+        let n = min(max(normalized, 0), 1)
+        switch target {
+        case .clip(let id):
+            guard let layout = layout(for: id) else { return }
+            projectTime = min(max(0, layout.start + layout.duration * n), projectDuration)
+        case .global(let id):
+            guard let fx = speedFX.first(where: { $0.id == id }) else { return }
+            projectTime = min(max(0, fx.start + fx.duration * n), projectDuration)
+        }
+    }
+
     func curveProjectTime(_ target: CurveTarget, normalized: Double) -> Double {
         let n = min(max(normalized, 0), 1)
         switch target {
@@ -60,6 +78,32 @@ extension EditorViewModel {
             guard let fx = speedFX.first(where: { $0.id == id }) else { return projectTime }
             return fx.start + fx.duration * n
         }
+    }
+
+    func beginCurvePointEdit() {
+        player.pause()
+        isPlaying = false
+        registerUndo()
+    }
+
+    func moveCurvePointInteractive(_ target: CurveTarget, pointID: UUID, t: Double, speed: Double) {
+        objectWillChange.send()
+        switch target {
+        case .clip(let id):
+            guard let i = clips.firstIndex(where: { $0.id == id }) else { return }
+            clips[i].speedCurve.movePoint(id: pointID, t: t, speed: speed)
+            clips[i].curveEnabled = true
+        case .global(let id):
+            guard let i = speedFX.firstIndex(where: { $0.id == id }) else { return }
+            speedFX[i].curve.movePoint(id: pointID, t: t, speed: speed)
+        }
+        // Intentionally no schedulePreview() here. It made the drag restart/jump.
+    }
+
+    func finishCurvePointEdit(_ target: CurveTarget, normalized: Double) {
+        let n = min(max(normalized, 0), 1)
+        setCurvePlayheadVisual(target, normalized: n)
+        schedulePreview(immediate: true)
     }
 }
 
@@ -104,22 +148,34 @@ struct FullscreenPreviewV4: View {
 struct LaneHeightHandleV4: View {
     let height: CGFloat
     let onChange: (CGFloat) -> Void
-    @State private var anchor: CGFloat?
+    @State private var anchorHeight: CGFloat?
+    @State private var anchorY: CGFloat?
 
     var body: some View {
-        Capsule()
-            .fill(Color.secondary.opacity(0.55))
-            .frame(width: 30, height: 5)
-            .contentShape(Rectangle().inset(by: -12))
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if anchor == nil { anchor = height }
-                        let newHeight = min(max((anchor ?? height) + value.translation.height, 38), 120)
-                        onChange(newHeight)
+        ZStack {
+            Rectangle().fill(Color.clear)
+            Capsule()
+                .fill(Color.secondary.opacity(0.6))
+                .frame(width: 32, height: 5)
+        }
+        .frame(width: 50, height: 30)
+        .contentShape(Rectangle())
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if anchorHeight == nil {
+                        anchorHeight = height
+                        anchorY = value.startLocation.y
                     }
-                    .onEnded { _ in anchor = nil }
-            )
+                    let delta = value.location.y - (anchorY ?? value.startLocation.y)
+                    let newHeight = min(max((anchorHeight ?? height) + delta, 38), 150)
+                    onChange(newHeight)
+                }
+                .onEnded { _ in
+                    anchorHeight = nil
+                    anchorY = nil
+                }
+        )
     }
 }
 
@@ -131,27 +187,39 @@ struct TimelineTrimHandleV4: View {
     var height: CGFloat = 38
     let onBegin: () -> Void
     let onChange: (Double) -> Void
-    @State private var anchor: Double?
+    var onEnd: () -> Void = {}
+    @State private var anchorValue: Double?
+    @State private var anchorX: CGFloat?
 
     var body: some View {
-        Capsule()
-            .fill(Color.white.opacity(0.95))
-            .overlay(Capsule().stroke(Color.accentColor.opacity(0.65), lineWidth: 1))
-            .frame(width: 12, height: max(28, height))
-            .contentShape(Rectangle().inset(by: -10))
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if anchor == nil {
-                            anchor = currentValue
-                            onBegin()
-                        }
-                        let deltaOutput = Double(value.translation.width) / max(1, pps)
-                        let deltaSource = deltaOutput * max(0.02, sourcePerOutput)
-                        onChange((anchor ?? currentValue) + deltaSource)
+        ZStack {
+            Rectangle().fill(Color.clear)
+            Capsule()
+                .fill(Color.white.opacity(0.96))
+                .overlay(Capsule().stroke(Color.accentColor.opacity(0.7), lineWidth: 1))
+                .frame(width: 12, height: max(28, height))
+        }
+        .frame(width: 34, height: max(40, height + 8))
+        .contentShape(Rectangle())
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if anchorValue == nil {
+                        anchorValue = currentValue
+                        anchorX = value.startLocation.x
+                        onBegin()
                     }
-                    .onEnded { _ in anchor = nil }
-            )
+                    let dx = value.location.x - (anchorX ?? value.startLocation.x)
+                    let deltaOutput = Double(dx) / max(1, pps)
+                    let deltaSource = deltaOutput * max(0.02, sourcePerOutput)
+                    onChange((anchorValue ?? currentValue) + deltaSource)
+                }
+                .onEnded { _ in
+                    anchorValue = nil
+                    anchorX = nil
+                    onEnd()
+                }
+        )
     }
 }
 
@@ -162,40 +230,50 @@ struct SpeedFXEdgeHandleV4: View {
     let pps: Double
     let onBegin: () -> Void
     let onChange: (Double, Double) -> Void
+    var onEnd: () -> Void = {}
     @State private var anchorStart: Double?
     @State private var anchorDuration: Double?
+    @State private var anchorX: CGFloat?
 
     var body: some View {
-        Capsule()
-            .fill(Color.white.opacity(0.9))
-            .frame(width: 9, height: 26)
-            .contentShape(Rectangle().inset(by: -10))
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if anchorStart == nil {
-                            anchorStart = start
-                            anchorDuration = duration
-                            onBegin()
-                        }
-                        let baseStart = anchorStart ?? start
-                        let baseDuration = anchorDuration ?? duration
-                        let delta = Double(value.translation.width) / max(1, pps)
-                        if leading {
-                            let maxDelta = baseDuration - 0.08
-                            let safeDelta = min(delta, maxDelta)
-                            let newStart = max(0, baseStart + safeDelta)
-                            let actualDelta = newStart - baseStart
-                            onChange(newStart, max(0.08, baseDuration - actualDelta))
-                        } else {
-                            onChange(baseStart, min(max(baseDuration + delta, 0.08), 8))
-                        }
+        ZStack {
+            Rectangle().fill(Color.clear)
+            Capsule()
+                .fill(Color.white.opacity(0.92))
+                .frame(width: 9, height: 26)
+        }
+        .frame(width: 32, height: 38)
+        .contentShape(Rectangle())
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if anchorStart == nil {
+                        anchorStart = start
+                        anchorDuration = duration
+                        anchorX = value.startLocation.x
+                        onBegin()
                     }
-                    .onEnded { _ in
-                        anchorStart = nil
-                        anchorDuration = nil
+                    let baseStart = anchorStart ?? start
+                    let baseDuration = anchorDuration ?? duration
+                    let dx = value.location.x - (anchorX ?? value.startLocation.x)
+                    let delta = Double(dx) / max(1, pps)
+                    if leading {
+                        let maxDelta = baseDuration - 0.08
+                        let safeDelta = min(delta, maxDelta)
+                        let newStart = max(0, baseStart + safeDelta)
+                        let actualDelta = newStart - baseStart
+                        onChange(newStart, max(0.08, baseDuration - actualDelta))
+                    } else {
+                        onChange(baseStart, min(max(baseDuration + delta, 0.08), 8))
                     }
-            )
+                }
+                .onEnded { _ in
+                    anchorStart = nil
+                    anchorDuration = nil
+                    anchorX = nil
+                    onEnd()
+                }
+        )
     }
 }
 
@@ -248,17 +326,19 @@ struct ResizableTimelineClipCardV4: View {
     }
 }
 
+// Tap a point once to select it. Then drag anywhere inside the graph to move
+// the selected point. This avoids SwiftUI losing the gesture when the point
+// itself moves underneath the finger.
 struct InlineCurveEditorV4: View {
     @ObservedObject var model: EditorViewModel
     let target: CurveTarget
     let onOpen: () -> Void
     @State private var selectedPointID: UUID?
+    @State private var editingCurve = false
 
     var body: some View {
         GeometryReader { geo in
             let curve = model.curve(for: target)
-            let spaceName = "inline-\(target.id)"
-
             ZStack {
                 RoundedRectangle(cornerRadius: 7)
                     .fill(Color.accentColor.opacity(0.055))
@@ -267,8 +347,8 @@ struct InlineCurveEditorV4: View {
                     var path = Path()
                     for i in 0...90 {
                         let t = Double(i) / 90
-                        let point = CGPoint(x: CGFloat(t) * size.width, y: speedY(curve.value(at: t), height: size.height))
-                        if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                        let p = CGPoint(x: CGFloat(t) * size.width, y: speedY(curve.value(at: t), height: size.height))
+                        if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
                     }
                     context.stroke(path, with: .color(.accentColor), lineWidth: 2)
                 }
@@ -281,27 +361,30 @@ struct InlineCurveEditorV4: View {
                     .allowsHitTesting(false)
 
                 ForEach(curve.points) { point in
-                    Circle()
-                        .fill(point.id == selectedPointID ? Color.white : Color.accentColor)
-                        .overlay(Circle().stroke(Color.accentColor, lineWidth: 1.5))
-                        .frame(width: point.id == selectedPointID ? 15 : 12, height: point.id == selectedPointID ? 15 : 12)
-                        .position(x: CGFloat(point.t) * geo.size.width, y: speedY(point.speed, height: geo.size.height))
-                        .contentShape(Rectangle().inset(by: -12))
-                        .onTapGesture { selectedPointID = point.id }
-                        .highPriorityGesture(
-                            DragGesture(minimumDistance: 0, coordinateSpace: .named(spaceName))
-                                .onChanged { value in
-                                    selectedPointID = point.id
-                                    let t = min(max(Double(value.location.x / max(1, geo.size.width)), 0), 1)
-                                    let speed = ySpeed(value.location.y, height: geo.size.height)
-                                    model.moveCurvePoint(target, pointID: point.id, t: t, speed: speed)
-                                    model.seekCurveTarget(target, normalized: t)
-                                }
-                        )
+                    Button {
+                        selectedPointID = point.id
+                    } label: {
+                        ZStack {
+                            Circle().fill(Color.clear).frame(width: 42, height: 42)
+                            Circle()
+                                .fill(point.id == selectedPointID ? Color.white : Color.accentColor)
+                                .overlay(Circle().stroke(Color.accentColor, lineWidth: 1.5))
+                                .frame(width: point.id == selectedPointID ? 17 : 12, height: point.id == selectedPointID ? 17 : 12)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .position(x: CGFloat(point.t) * geo.size.width, y: speedY(point.speed, height: geo.size.height))
                 }
 
                 VStack {
                     HStack {
+                        if selectedPointID != nil {
+                            Text("Точка выбрана")
+                                .font(.system(size: 8, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(.thinMaterial, in: Capsule())
+                        }
                         Spacer()
                         Button(action: onOpen) {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
@@ -315,9 +398,28 @@ struct InlineCurveEditorV4: View {
                 }
                 .padding(3)
             }
-            .coordinateSpace(name: spaceName)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2, coordinateSpace: .named(spaceName)) { location in
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 5, coordinateSpace: .local)
+                    .onChanged { value in
+                        guard let id = selectedPointID else { return }
+                        if !editingCurve {
+                            editingCurve = true
+                            model.beginCurvePointEdit()
+                        }
+                        let t = min(max(Double(value.location.x / max(1, geo.size.width)), 0), 1)
+                        let speed = ySpeed(value.location.y, height: geo.size.height)
+                        model.moveCurvePointInteractive(target, pointID: id, t: t, speed: speed)
+                        model.setCurvePlayheadVisual(target, normalized: t)
+                    }
+                    .onEnded { value in
+                        guard selectedPointID != nil, editingCurve else { return }
+                        let t = min(max(Double(value.location.x / max(1, geo.size.width)), 0), 1)
+                        editingCurve = false
+                        model.finishCurvePointEdit(target, normalized: t)
+                    }
+            )
+            .onTapGesture(count: 2) { location in
                 let t = min(max(Double(location.x / max(1, geo.size.width)), 0.01), 0.99)
                 model.addCurvePoint(target, t: t, speed: curve.value(at: t))
                 model.seekCurveTarget(target, normalized: t)
@@ -330,12 +432,11 @@ struct CurveEditorGraphV4: View {
     @ObservedObject var model: EditorViewModel
     let target: CurveTarget
     @Binding var selectedPointID: UUID?
+    @State private var editingCurve = false
 
     var body: some View {
         GeometryReader { geo in
             let curve = model.curve(for: target)
-            let spaceName = "curve-editor-\(target.id)"
-
             ZStack {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color.secondary.opacity(0.08))
@@ -343,10 +444,10 @@ struct CurveEditorGraphV4: View {
                 Canvas { context, size in
                     for speed in [0.1, 0.25, 0.5, 1, 2, 5, 10, 20] as [Double] {
                         let y = speedY(speed, height: size.height)
-                        var p = Path()
-                        p.move(to: CGPoint(x: 0, y: y))
-                        p.addLine(to: CGPoint(x: size.width, y: y))
-                        context.stroke(p, with: .color(speed == 1 ? .secondary.opacity(0.45) : .secondary.opacity(0.16)), lineWidth: speed == 1 ? 1.2 : 0.6)
+                        var grid = Path()
+                        grid.move(to: CGPoint(x: 0, y: y))
+                        grid.addLine(to: CGPoint(x: size.width, y: y))
+                        context.stroke(grid, with: .color(speed == 1 ? .secondary.opacity(0.45) : .secondary.opacity(0.16)), lineWidth: speed == 1 ? 1.2 : 0.6)
                         let label = context.resolve(Text("\(speed, specifier: "%g")×").font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary))
                         context.draw(label, at: CGPoint(x: 5, y: y - 2), anchor: .bottomLeading)
                     }
@@ -354,8 +455,8 @@ struct CurveEditorGraphV4: View {
                     var path = Path()
                     for i in 0...160 {
                         let t = Double(i) / 160
-                        let point = CGPoint(x: CGFloat(t) * size.width, y: speedY(curve.value(at: t), height: size.height))
-                        if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                        let p = CGPoint(x: CGFloat(t) * size.width, y: speedY(curve.value(at: t), height: size.height))
+                        if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
                     }
                     context.stroke(path, with: .color(.accentColor), lineWidth: 3)
                 }
@@ -368,28 +469,59 @@ struct CurveEditorGraphV4: View {
                     .allowsHitTesting(false)
 
                 ForEach(curve.points) { point in
-                    Circle()
-                        .fill(point.id == selectedPointID ? Color.white : Color.accentColor)
-                        .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
-                        .frame(width: point.id == selectedPointID ? 20 : 16, height: point.id == selectedPointID ? 20 : 16)
-                        .position(x: CGFloat(point.t) * geo.size.width, y: speedY(point.speed, height: geo.size.height))
-                        .contentShape(Rectangle().inset(by: -14))
-                        .onTapGesture { selectedPointID = point.id }
-                        .highPriorityGesture(
-                            DragGesture(minimumDistance: 0, coordinateSpace: .named(spaceName))
-                                .onChanged { value in
-                                    selectedPointID = point.id
-                                    let t = min(max(Double(value.location.x / max(1, geo.size.width)), 0), 1)
-                                    let speed = ySpeed(value.location.y, height: geo.size.height)
-                                    model.moveCurvePoint(target, pointID: point.id, t: t, speed: speed)
-                                    model.seekCurveTarget(target, normalized: t)
-                                }
-                        )
+                    Button {
+                        selectedPointID = point.id
+                    } label: {
+                        ZStack {
+                            Circle().fill(Color.clear).frame(width: 48, height: 48)
+                            Circle()
+                                .fill(point.id == selectedPointID ? Color.white : Color.accentColor)
+                                .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
+                                .frame(width: point.id == selectedPointID ? 22 : 17, height: point.id == selectedPointID ? 22 : 17)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .position(x: CGFloat(point.t) * geo.size.width, y: speedY(point.speed, height: geo.size.height))
+                }
+
+                if let id = selectedPointID, let point = curve.points.first(where: { $0.id == id }) {
+                    VStack {
+                        HStack {
+                            Text(String(format: "Точка • %.2f× • %.1f%%", point.speed, point.t * 100))
+                                .font(.caption2.monospacedDigit().weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(.ultraThinMaterial, in: Capsule())
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                    .padding(8)
+                    .allowsHitTesting(false)
                 }
             }
-            .coordinateSpace(name: spaceName)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2, coordinateSpace: .named(spaceName)) { location in
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 5, coordinateSpace: .local)
+                    .onChanged { value in
+                        guard let id = selectedPointID else { return }
+                        if !editingCurve {
+                            editingCurve = true
+                            model.beginCurvePointEdit()
+                        }
+                        let t = min(max(Double(value.location.x / max(1, geo.size.width)), 0), 1)
+                        let speed = ySpeed(value.location.y, height: geo.size.height)
+                        model.moveCurvePointInteractive(target, pointID: id, t: t, speed: speed)
+                        model.setCurvePlayheadVisual(target, normalized: t)
+                    }
+                    .onEnded { value in
+                        guard selectedPointID != nil, editingCurve else { return }
+                        let t = min(max(Double(value.location.x / max(1, geo.size.width)), 0), 1)
+                        editingCurve = false
+                        model.finishCurvePointEdit(target, normalized: t)
+                    }
+            )
+            .onTapGesture(count: 2) { location in
                 let t = min(max(Double(location.x / max(1, geo.size.width)), 0.01), 0.99)
                 let speed = ySpeed(location.y, height: geo.size.height)
                 model.addCurvePoint(target, t: t, speed: speed)
