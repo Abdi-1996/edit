@@ -10,17 +10,24 @@ if old_stack not in s:
 s = s.replace(old_stack, new_stack, 1)
 '''
 new = '''# Remove the top bar and separate playback row. Preview becomes the complete top area.
-# Earlier patches can change Preview sizing/spacing, so only match the stable sequence.
-stack_pattern = re.compile(
-    r'topBar;preview\\.frame\\(height:.*?\\);playback;if let target=curveTarget',
-    re.S
+# Work independently of earlier layout patches: remove the two body references,
+# then resize the first Preview frame we find.
+if 'topBar;' not in s:
+    raise RuntimeError('topBar body reference not found')
+s = s.replace('topBar;', '', 1)
+if 'playback;' not in s:
+    raise RuntimeError('playback body reference not found')
+s = s.replace('playback;', '', 1)
+s, count = re.subn(
+    r'preview\\.frame\\(height:min\\(.*?root\\.size\\.height\\*0\\.[0-9]+\\)\\)\\)',
+    'preview.frame(height:min(390,max(255,root.size.height*0.42))).ignoresSafeArea(edges:.top)',
+    s,
+    count=1
 )
-stack_replacement = 'preview.frame(height:min(390,max(255,root.size.height*0.42))).ignoresSafeArea(edges:.top);if let target=curveTarget'
-s, count = stack_pattern.subn(stack_replacement, s, count=1)
 if count != 1:
-    raise RuntimeError('v0.4.6 editor stack sequence not found')
+    raise RuntimeError('Preview height expression not found')
 '''
 if old not in s:
     raise RuntimeError('Old v0.4.7 stack matcher source not found')
 p.write_text(s.replace(old, new, 1))
-print('Relaxed v0.4.7 editor stack matcher')
+print('Relaxed v0.4.7 editor body matcher')
