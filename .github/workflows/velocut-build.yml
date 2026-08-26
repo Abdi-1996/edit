@@ -32,6 +32,9 @@ jobs:
       - name: Patch v0.4.3 smooth finishes
         run: python3 VeloCutAI/patch_v043_finish.py
 
+      - name: Patch v0.4.4 curve UI
+        run: python3 VeloCutAI/patch_v044_curve_ui.py
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -63,11 +66,11 @@ jobs:
           rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -qry VeloCutAI-v0.4.3-unsigned.ipa Payload
+          zip -qry VeloCutAI-v0.4.4-unsigned.ipa Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VeloCutAI-v0.4.3-unsigned-ipa
-          path: VeloCutAI/VeloCutAI-v0.4.3-unsigned.ipa
+          name: VeloCutAI-v0.4.4-unsigned-ipa
+          path: VeloCutAI/VeloCutAI-v0.4.4-unsigned.ipa
           if-no-files-found: error
