@@ -47,6 +47,9 @@ jobs:
       - name: Patch v0.4.5 pro UI
         run: python3 VeloCutAI/patch_v045_pro_ui.py
 
+      - name: Patch v0.4.5 compile fixes
+        run: python3 VeloCutAI/patch_v045_compile.py
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
