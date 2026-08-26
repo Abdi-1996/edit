@@ -17,8 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Patch original v0.4 interactions
-        working-directory: VeloCutAI
-        run: python3 patch_v04_interactions.py
+        run: python3 VeloCutAI/patch_v04_interactions.py
 
       - name: Install XcodeGen
         run: brew install xcodegen
