@@ -41,6 +41,9 @@ jobs:
       - name: Fix v0.4.5 patch matchers
         run: python3 VeloCutAI/patch_v045_matcher_fix.py
 
+      - name: Fix v0.4.5 clip card matcher
+        run: python3 VeloCutAI/patch_v045_card_matcher.py
+
       - name: Patch v0.4.5 pro UI
         run: python3 VeloCutAI/patch_v045_pro_ui.py
 
