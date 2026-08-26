@@ -6,7 +6,7 @@ on:
     branches: [ velocut-build ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -15,6 +15,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Fix Xcode 16 async seek and persist
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('VeloCutAI/VeloCutAI/VeloCutAIApp.swift')
+          text = path.read_text()
+          old = '            player.seek(to: CMTime(seconds: safe, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)'
+          new = '            await player.seek(to: CMTime(seconds: safe, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)'
+          if old in text:
+              path.write_text(text.replace(old, new, 1))
+          PY
+          if ! git diff --quiet; then
+            git config user.name "VeloCut Build Bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add VeloCutAI/VeloCutAI/VeloCutAIApp.swift
+            git commit -m "Fix Xcode async seek [skip ci]"
+            git push origin HEAD:velocut-build
+          fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -52,6 +71,6 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VeloCutAI-unsigned-ipa
+          name: VeloCutAI-v0.3-unsigned-ipa
           path: VeloCutAI/VeloCutAI-unsigned.ipa
           if-no-files-found: error
