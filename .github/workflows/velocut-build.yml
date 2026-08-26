@@ -21,15 +21,26 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
+
           p = Path('VeloCutAI/VeloCutAI/VeloCutV4.swift')
           s = p.read_text()
+
           s = s.replace('min(max(value, 0, ), 2)', 'min(max(value, 0), 2)')
-          # Swift 5.10/6 parser requires a leading zero for decimal literals.
-          s = re.sub(r'(?<![A-Za-z0-9_])\.(\d+)', r'0.\1', s)
-          # Normalize assignment whitespace without touching ==, <=, >= or !=.
-          s = re.sub(r'(?<![<>=!])\s*=\s*(?!=)', ' = ', s)
-          # Compact arithmetic around literals can be parsed as postfix operators.
-          s = re.sub(r'(?<=[A-Za-z0-9_)])\s*([+-])\s*(?=0\.\d|\d)', r' \1 ', s)
+
+          # Leading zero for shorthand decimal literals, but never touch the third dot in a closed range (...).
+          s = re.sub(r'(?<![A-Za-z0-9_.])\.(\d+)', r'0.\1', s)
+
+          # Normalize simple assignment only. Preserve +=, -=, *=, /=, comparisons and pattern operators.
+          s = re.sub(r'(?<![<>=!+\-*/%&|^])\s*=\s*(?!=)', ' = ', s)
+
+          # Swift can parse compact arithmetic before a decimal as a postfix operator.
+          s = re.sub(r'(?<=[A-Za-z0-9_)])([+-])(?=0\.\d)', r' \1 ', s)
+
+          # A few compact state assignments benefit from explicit spaces.
+          s = s.replace('drag=.zero', 'drag = .zero')
+          s = s.replace('c.videoGravity=.resizeAspect', 'c.videoGravity = .resizeAspect')
+          s = s.replace('session.outputFileType=.mp4', 'session.outputFileType = .mp4')
+
           p.write_text(s)
           PY
 
