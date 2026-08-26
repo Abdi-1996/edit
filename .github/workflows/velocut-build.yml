@@ -16,34 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Apply v0.4 source hotfixes
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          p = Path('VeloCutAI/VeloCutAI/VeloCutV4.swift')
-          s = p.read_text()
-
-          s = s.replace('min(max(value, 0, ), 2)', 'min(max(value, 0), 2)')
-
-          # Leading zero for shorthand decimal literals, but never touch the third dot in a closed range (...).
-          s = re.sub(r'(?<![A-Za-z0-9_.])\.(\d+)', r'0.\1', s)
-
-          # Normalize simple assignment only. Preserve +=, -=, *=, /=, comparisons and pattern operators.
-          s = re.sub(r'(?<![<>=!+\-*/%&|^])\s*=\s*(?!=)', ' = ', s)
-
-          # Swift can parse compact arithmetic before a decimal as a postfix operator.
-          s = re.sub(r'(?<=[A-Za-z0-9_)])([+-])(?=0\.\d)', r' \1 ', s)
-
-          # A few compact state assignments benefit from explicit spaces.
-          s = s.replace('drag=.zero', 'drag = .zero')
-          s = s.replace('c.videoGravity=.resizeAspect', 'c.videoGravity = .resizeAspect')
-          s = s.replace('session.outputFileType=.mp4', 'session.outputFileType = .mp4')
-
-          p.write_text(s)
-          PY
-
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -75,11 +47,11 @@ jobs:
           rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -qry VeloCutAI-v0.4-unsigned.ipa Payload
+          zip -qry VeloCutAI-v0.5-unsigned.ipa Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VeloCutAI-v0.4-unsigned-ipa
-          path: VeloCutAI/VeloCutAI-v0.4-unsigned.ipa
+          name: VeloCutAI-v0.5-unsigned-ipa
+          path: VeloCutAI/VeloCutAI-v0.5-unsigned.ipa
           if-no-files-found: error
