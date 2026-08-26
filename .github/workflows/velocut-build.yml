@@ -16,6 +16,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Prepare v0.4.2 patcher
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('VeloCutAI/patch_v04_interactions.py')
+          s = p.read_text()
+          s = s.replace(r"ForEach\(0<\.\.<3", r"ForEach\(0\.\.<3")
+          p.write_text(s)
+          PY
+
       - name: Patch original v0.4 interactions
         run: python3 VeloCutAI/patch_v04_interactions.py
 
