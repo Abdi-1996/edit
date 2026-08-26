@@ -29,5 +29,21 @@ if count != 1:
 '''
 if old not in s:
     raise RuntimeError('Old v0.4.7 stack matcher source not found')
-p.write_text(s.replace(old, new, 1))
-print('Relaxed v0.4.7 editor body matcher')
+s = s.replace(old, new, 1)
+
+# Earlier patches reformat these Swift blocks, so do not depend on blank lines.
+s = s.replace(
+    "re.compile(r'    private var preview:some View\\{.*?\\n\\n    private var playback:', re.S)",
+    "re.compile(r'    private var preview:some View\\s*\\{.*?    private var playback:', re.S)"
+)
+s = s.replace(
+    "re.compile(r'struct CurveEditorPanel:View \\{.*?\\n\\}\\n\\nstruct InspectorSheet:View', re.S)",
+    "re.compile(r'struct CurveEditorPanel:View\\s*\\{.*?struct InspectorSheet:View', re.S)"
+)
+s = s.replace(
+    "re.compile(r'    private var speed:some View\\{.*?\\n    private var audio:', re.S)",
+    "re.compile(r'    private var speed:some View\\s*\\{.*?    private var audio:', re.S)"
+)
+
+p.write_text(s)
+print('Relaxed v0.4.7 editor body, Preview and Curve matchers')
