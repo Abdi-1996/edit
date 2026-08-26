@@ -8,16 +8,14 @@ settings:
     SWIFT_VERSION: 5.0
     IPHONEOS_DEPLOYMENT_TARGET: 17.0
     TARGETED_DEVICE_FAMILY: '1,2'
-    MARKETING_VERSION: 0.4.0
-    CURRENT_PROJECT_VERSION: 4
+    MARKETING_VERSION: 0.5.0
+    CURRENT_PROJECT_VERSION: 5
 targets:
   VeloCutAI:
     type: application
     platform: iOS
     sources:
-      - path: VeloCutAI
-        excludes:
-          - VeloCutAIApp.swift
+      - path: VeloCutV05
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.velocut.ai
