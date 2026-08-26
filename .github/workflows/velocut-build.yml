@@ -59,6 +59,9 @@ jobs:
       - name: Patch v0.4.7 clean UI and saved curves
         run: python3 VeloCutAI/patch_v047_clean_ui.py
 
+      - name: Patch v0.4.7 compile fixes
+        run: python3 VeloCutAI/patch_v047_compile.py
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
