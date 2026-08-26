@@ -547,7 +547,7 @@ final class EditorViewModel: ObservableObject {
             player.replaceCurrentItem(with: item)
             let safe = min(max(0, target), max(0, projectDuration))
             projectTime = safe
-            player.seek(to: CMTime(seconds: safe, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            await player.seek(to: CMTime(seconds: safe, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             if wasPlaying { player.play() }
             cacheRevision += 1
             isPreviewCaching = false
