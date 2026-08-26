@@ -1,1 +1,1 @@
-Trigger VeloCut AI build.
+Trigger VeloCut AI build v0.4.7.
