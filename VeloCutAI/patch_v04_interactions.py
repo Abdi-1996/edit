@@ -4,25 +4,93 @@ import re
 p = Path('VeloCutAI/VeloCutAI/VeloCutV4.swift')
 s = p.read_text()
 
-# Keep the original v0.4 UI and add only interaction state.
 s = s.replace(
     '@State private var expandedLanes:Set<Int>=[]',
-    '@State private var expandedLanes:Set<Int>=[]\n    @State private var timelineMagnificationBase:Double?'
+    '@State private var expandedLanes:Set<Int>=[]\n    @State private var timelineMagnificationBase:Double?\n    @State private var showFullscreenPreview=false\n    @State private var laneHeights:[Int:CGFloat]=[0:46,1:46,2:46]'
 )
 
-# Wider zoom range while keeping the original +/- controls.
+s = s.replace(
+    '.sheet(isPresented:$model.isFileImporting)',
+    '.fullScreenCover(isPresented:$showFullscreenPreview){FullscreenPreviewV4(player:model.player,onClose:{showFullscreenPreview=false})}\n        .sheet(isPresented:$model.isFileImporting)',
+    1
+)
+
+preview_pattern = re.compile(r'^\s*private var preview:some View.*$', re.M)
+preview_replacement = r'''    private var preview:some View {
+        GeometryReader { g in
+            ZStack {
+                RoundedRectangle(cornerRadius:22).fill(.black)
+                if !model.clips.isEmpty {
+                    PlayerView(player:model.player).clipShape(RoundedRectangle(cornerRadius:22))
+                    if !model.overlayText.isEmpty {
+                        Text(model.overlayText)
+                            .font(.system(size:model.overlayTextSize,weight:.bold))
+                            .foregroundStyle(.white)
+                            .shadow(radius:4)
+                            .position(x:g.size.width/2,y:g.size.height*model.overlayTextY)
+                    }
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Button { showFullscreenPreview = true } label: {
+                                Image(systemName:"arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size:13,weight:.bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width:36,height:36)
+                                    .background(.ultraThinMaterial,in:Circle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Spacer()
+                    }
+                    .padding(10)
+                } else {
+                    VStack(spacing:14) {
+                        Image(systemName:"film.stack").font(.system(size:42)).foregroundStyle(.white)
+                        Text("Добавить видео").foregroundStyle(.white)
+                        PhotosPicker(selection:$photoItems,maxSelectionCount:20,matching:.videos) {
+                            Label("Из Фото",systemImage:"photo")
+                                .padding(.horizontal,16)
+                                .frame(height:38)
+                                .background(.white,in:Capsule())
+                                .foregroundStyle(.black)
+                        }
+                    }
+                }
+                if model.isPreviewCaching {
+                    VStack {
+                        HStack { ProgressView().controlSize(.mini); Text("Кеш превью") }
+                            .font(.caption2)
+                            .padding(7)
+                            .background(.ultraThinMaterial,in:Capsule())
+                        Spacer()
+                    }
+                    .padding(10)
+                }
+            }
+        }
+        .padding(.horizontal,10)
+        .padding(.top,8)
+    }'''
+s, count = preview_pattern.subn(preview_replacement, s, count=1)
+if count != 1:
+    raise RuntimeError('Preview block was not found')
+
 s = s.replace(
     'Button{model.timelineZoom=max(.55,model.timelineZoom-.2)}label:{Image(systemName:"minus.magnifyingglass")};Button{model.timelineZoom=min(3.2,model.timelineZoom+.2)}label:{Image(systemName:"plus.magnifyingglass")}',
     'Button{model.timelineZoom=max(0.35,model.timelineZoom-0.2)}label:{Image(systemName:"minus.magnifyingglass")};Button{model.timelineZoom=min(8.0,model.timelineZoom+0.2)}label:{Image(systemName:"plus.magnifyingglass")}'
 )
 
-# Give inline curve editing enough vertical room.
 s = s.replace(
-    'let pps=34.0*model.timelineZoom, center=geo.size.width/2, rulerH=22.0, fxH=42.0, videoH=46.0, curveH=34.0',
-    'let pps=34.0*model.timelineZoom, center=geo.size.width/2, rulerH=22.0, fxH=42.0, videoH=46.0, curveH=56.0'
+    'GeometryReader{geo in timelineCanvas(geo)}.frame(minHeight:230)',
+    'ScrollView(.vertical,showsIndicators:false){GeometryReader{geo in timelineCanvas(geo)}.frame(height:timelineRequiredHeight)}.frame(minHeight:230,maxHeight:360)'
 )
 
-# Global Speed FX: keep the original block and add left/right resize handles.
+s = s.replace(
+    'let pps=34.0*model.timelineZoom, center=geo.size.width/2, rulerH=22.0, fxH=42.0, videoH=46.0, curveH=34.0\n        let laneTop:(Int)->CGFloat={lane in var y=rulerH+fxH;for l in 0..<lane{y += videoH + (expandedLanes.contains(l) ? curveH:0)};return y}',
+    'let pps=34.0*model.timelineZoom, center=geo.size.width/2, rulerH=22.0, fxH=42.0, curveH=56.0\n        let laneHeight:(Int)->CGFloat={laneHeights[$0] ?? 46}\n        let laneTop:(Int)->CGFloat={lane in var y=rulerH+fxH;for l in 0..<lane{y += laneHeight(l) + (expandedLanes.contains(l) ? curveH:0)};return y}'
+)
+
 fx_pattern = re.compile(r'^\s*ForEach\(model\.speedFX\)\{fx in .*$', re.M)
 fx_replacement = '''            ForEach(model.speedFX){fx in
                 let w=max(48,fx.duration*pps),x=center+(fx.start-model.projectTime)*pps+w/2
@@ -62,20 +130,60 @@ s, count = fx_pattern.subn(fx_replacement, s, count=1)
 if count != 1:
     raise RuntimeError('Speed FX timeline block was not found')
 
-# Video clip: preserve card + long press/drag, add trim handles and editable speed curve under the clip.
+lane_pattern = re.compile(r'^\s*ForEach\(0<\.\.<3,id:\\\.self\)\{lane in .*$', re.M)
+lane_replacement = '''            ForEach(0..<3,id:\\.self){lane in
+                let top=laneTop(lane),h=laneHeight(lane)
+                RoundedRectangle(cornerRadius:8)
+                    .fill(Color.secondary.opacity(0.06))
+                    .frame(height:max(35,h-3))
+                    .offset(y:top)
+
+                Button {
+                    if expandedLanes.contains(lane){expandedLanes.remove(lane)}else{expandedLanes.insert(lane)}
+                } label: {
+                    HStack(spacing:3){
+                        Text("V\\(lane+1)")
+                        Image(systemName:expandedLanes.contains(lane) ? "chevron.up":"chevron.down")
+                    }
+                    .font(.system(size:9,weight:.bold))
+                    .padding(4)
+                    .background(.thinMaterial,in:Capsule())
+                }
+                .buttonStyle(.plain)
+                .position(x:24,y:top+12)
+
+                LaneHeightHandleV4(height:h){laneHeights[lane]=$0}
+                    .position(x:geo.size.width-22,y:top+h-7)
+
+                if expandedLanes.contains(lane){
+                    RoundedRectangle(cornerRadius:7)
+                        .fill(Color.accentColor.opacity(0.035))
+                        .frame(height:curveH-2)
+                        .offset(y:top+h)
+                    Text("Speed")
+                        .font(.system(size:8,weight:.semibold))
+                        .foregroundStyle(.secondary)
+                        .position(x:22,y:top+h+10)
+                }
+            }'''
+s, count = lane_pattern.subn(lane_replacement, s, count=1)
+if count != 1:
+    raise RuntimeError('Lane block was not found')
+
 clip_pattern = re.compile(r'^\s*ForEach\(Array\(model\.layouts\.enumerated\(\)\),id:\\\.element\.id\)\{index,l in .*$', re.M)
 clip_replacement = '''            ForEach(Array(model.layouts.enumerated()),id:\\.element.id){index,l in
-                let w=max(52,l.duration*pps),x=center+(l.start-model.projectTime)*pps+w/2,top=laneTop(l.clip.track)
-                TimelineClipCardV4(
+                let w=max(52,l.duration*pps),x=center+(l.start-model.projectTime)*pps+w/2,top=laneTop(l.clip.track),h=laneHeight(l.clip.track)
+                ResizableTimelineClipCardV4(
                     clip:l.clip,
                     index:index,
                     width:w,
+                    height:max(40,h-6),
                     selected:l.id==model.selectedClipID,
                     onTap:{model.selectClip(l.id)},
                     onMenu:{model.selectedClipID=l.id;contextClipID=l.id;clipDialog=true},
                     onMove:{model.moveClip(l.id,translation:$0,pps:pps)}
                 )
-                .position(x:x,y:top+videoH/2)
+                .position(x:x,y:top+h/2)
 
                 if l.id == model.selectedClipID {
                     let sourcePerOutput = l.clip.sourceDuration / max(l.duration,0.01)
@@ -84,20 +192,22 @@ clip_replacement = '''            ForEach(Array(model.layouts.enumerated()),id:\
                         currentValue:l.clip.trimStart,
                         pps:pps,
                         sourcePerOutput:sourcePerOutput,
+                        height:max(28,h-10),
                         onBegin:{model.beginInteractiveEdit()},
                         onChange:{model.setTrimStartInteractive(l.id,$0)}
                     )
-                    .position(x:x-w/2+6,y:top+videoH/2)
+                    .position(x:x-w/2+6,y:top+h/2)
 
                     TimelineTrimHandleV4(
                         leading:false,
                         currentValue:l.clip.trimEnd,
                         pps:pps,
                         sourcePerOutput:sourcePerOutput,
+                        height:max(28,h-10),
                         onBegin:{model.beginInteractiveEdit()},
                         onChange:{model.setTrimEndInteractive(l.id,$0)}
                     )
-                    .position(x:x+w/2-6,y:top+videoH/2)
+                    .position(x:x+w/2-6,y:top+h/2)
                 }
 
                 if expandedLanes.contains(l.clip.track) {
@@ -107,15 +217,13 @@ clip_replacement = '''            ForEach(Array(model.layouts.enumerated()),id:\
                         onOpen:{model.selectedClipID=l.id;curveTarget = .clip(l.id)}
                     )
                     .frame(width:w,height:curveH-5)
-                    .position(x:x,y:top+videoH+curveH/2)
+                    .position(x:x,y:top+h+curveH/2)
                 }
             }'''
 s, count = clip_pattern.subn(clip_replacement, s, count=1)
 if count != 1:
     raise RuntimeError('Clip timeline block was not found')
 
-# Existing one-finger drag remains project scrubbing/panning under the fixed playhead.
-# Pinch is added simultaneously so the v0.4 timeline can zoom naturally with two fingers.
 gesture_pattern = re.compile(r'^\s*\}\.clipped\(\)\.contentShape\(Rectangle\(\)\)\.gesture\(DragGesture\(minimumDistance:12\).*$', re.M)
 gesture_replacement = '''        }
         .clipped()
@@ -140,7 +248,19 @@ s, count = gesture_pattern.subn(gesture_replacement, s, count=1)
 if count != 1:
     raise RuntimeError('Timeline gesture block was not found')
 
-# Replace only the v0.4 large curve editor UI. Preview and the rest of v0.4 stay untouched.
+s = s.replace(
+    '    private var bottomBar:some View{',
+    '''    private var timelineRequiredHeight:CGFloat {
+        let base:CGFloat = 22 + 42 + 12
+        let video = (0..<3).reduce(CGFloat.zero) { $0 + (laneHeights[$1] ?? 46) }
+        let curves = CGFloat(expandedLanes.count) * 56
+        return max(230,base+video+curves)
+    }
+
+    private var bottomBar:some View{''',
+    1
+)
+
 curve_pattern = re.compile(r'^struct CurveEditorPanel:View.*$', re.M)
 curve_replacement = r'''struct CurveEditorPanel:View {
     @ObservedObject var model:EditorViewModel
@@ -154,7 +274,7 @@ curve_replacement = r'''struct CurveEditorPanel:View {
                 Button(action:onClose) { Image(systemName:"chevron.down.circle.fill").font(.title2) }
                 VStack(alignment:.leading) {
                     Text(title).font(.headline)
-                    Text("0.05× — 20× • playhead и точки синхронизированы с Preview").font(.caption2).foregroundStyle(.secondary)
+                    Text("Перетаскивайте точки • двойной тап добавляет точку").font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Menu {
@@ -203,7 +323,7 @@ curve_replacement = r'''struct CurveEditorPanel:View {
             .padding(.horizontal,14)
 
             CurveEditorGraphV4(model:model,target:target,selectedPointID:$selectedPoint)
-                .frame(minHeight:170)
+                .frame(minHeight:180)
                 .padding(.horizontal,12)
 
             HStack {
@@ -266,7 +386,6 @@ s, count = curve_pattern.subn(curve_replacement, s, count=1)
 if count != 1:
     raise RuntimeError('Curve editor block was not found')
 
-# Preserve the known successful v0.4 syntax normalization for Xcode 16.4.
 s = s.replace('min(max(value, 0, ), 2)', 'min(max(value, 0), 2)')
 s = re.sub(r'(?<![A-Za-z0-9_.])\.(\d+)', r'0.\1', s)
 s = re.sub(r'(?<![<>=!+\-*/%&|^])\s*=\s*(?!=)', ' = ', s)
@@ -276,4 +395,4 @@ s = s.replace('c.videoGravity=.resizeAspect', 'c.videoGravity = .resizeAspect')
 s = s.replace('session.outputFileType=.mp4', 'session.outputFileType = .mp4')
 
 p.write_text(s)
-print('Patched original v0.4 editor with timeline/curve interactions')
+print('Patched original v0.4 editor with v0.4.2 interactions')
