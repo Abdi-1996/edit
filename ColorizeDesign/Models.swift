@@ -25,11 +25,14 @@ struct CanvasElement: Identifiable, Codable {
     var id = UUID()
     var kind: Kind
     var text: String = ""
+    var imageData: Data? = nil
     var x: Double = 0.5
     var y: Double = 0.5
     var width: Double = 0.35
     var height: Double = 0.18
     var rotation: Double = 0
+    var scale: Double = 1
+    var opacity: Double = 1
     var fillHex: String = "#111111"
     var fontSize: Double = 42
 }
