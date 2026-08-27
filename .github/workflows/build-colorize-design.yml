@@ -1,9 +1,9 @@
-name: Colorize Design V2 IPA
+name: Colorize Design Full V3 IPA
 
 on:
   workflow_dispatch:
   push:
-    branches: [ colorize-design-v1 ]
+    branches: [ colorize-design-full-v3 ]
     paths:
       - 'ColorizeDesign/**'
       - 'project.yml'
@@ -14,13 +14,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-
       - name: Install XcodeGen
         run: brew install xcodegen
-
       - name: Generate Xcode project
         run: xcodegen generate
-
       - name: Build unsigned app
         run: |
           xcodebuild \
@@ -33,16 +30,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
             build
-
       - name: Package IPA
         run: |
           rm -rf Payload
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/ColorizeDesign.app Payload/
-          zip -qry ColorizeDesignV2-unsigned.ipa Payload
-
+          zip -qry ColorizeDesignFullV3-unsigned.ipa Payload
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ColorizeDesignV2-IPA
-          path: ColorizeDesignV2-unsigned.ipa
+          name: ColorizeDesignFullV3-IPA
+          path: ColorizeDesignFullV3-unsigned.ipa
