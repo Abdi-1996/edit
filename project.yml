@@ -1,0 +1,20 @@
+name: ColorizeDesign
+options:
+  bundleIdPrefix: kz.colorize
+  deploymentTarget:
+    iOS: '17.0'
+targets:
+  ColorizeDesign:
+    type: application
+    platform: iOS
+    sources: [ColorizeDesign]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: kz.colorize.design
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: 'Choose facade and product photos for your sign design.'
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: 'Save exported previews to Photos.'
+        TARGETED_DEVICE_FAMILY: '1,2'
+        SWIFT_VERSION: '5.9'
