@@ -1,0 +1,70 @@
+name: Colorize Designer Rebuild IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ colorize-designer-rebuild ]
+    paths:
+      - 'ColorizeDesignerRebuild/**'
+      - 'project.yml'
+      - '.github/workflows/build-colorize-designer-rebuild.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate app icon
+        run: |
+          cat > /tmp/make_icon.swift <<'SWIFT'
+          import AppKit
+          let size = NSSize(width: 1024, height: 1024)
+          let image = NSImage(size: size)
+          image.lockFocus()
+          NSColor(calibratedWhite: 0.97, alpha: 1).setFill()
+          NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+          func bar(_ rect: NSRect, _ c1: NSColor, _ c2: NSColor) {
+              let path = NSBezierPath(roundedRect: rect, xRadius: 65, yRadius: 65)
+              NSGradient(starting: c1, ending: c2)!.draw(in: path, angle: -90)
+          }
+          bar(NSRect(x: 285, y: 280, width: 125, height: 470), NSColor.systemPurple, NSColor.systemBlue)
+          bar(NSRect(x: 450, y: 230, width: 125, height: 570), NSColor.systemBlue, NSColor.systemPink)
+          bar(NSRect(x: 615, y: 280, width: 125, height: 470), NSColor.systemPurple, NSColor.systemPink)
+          image.unlockFocus()
+          let rep = NSBitmapImageRep(data: image.tiffRepresentation!)!
+          let png = rep.representation(using: .png, properties: [:])!
+          try! png.write(to: URL(fileURLWithPath: "ColorizeDesignerRebuild/Assets.xcassets/AppIcon.appiconset/AppIcon.png"))
+          SWIFT
+          swift /tmp/make_icon.swift
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build unsigned app
+        run: |
+          xcodebuild \
+            -project ColorizeDesignerRebuild.xcodeproj \
+            -scheme ColorizeDesignerRebuild \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+      - name: Package IPA
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/Colorize Designer.app"
+          test -d "$APP_PATH"
+          rm -rf Payload ColorizeDesignerRebuild-unsigned.ipa
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/
+          /usr/bin/zip -qry ColorizeDesignerRebuild-unsigned.ipa Payload
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ColorizeDesignerRebuild-IPA
+          path: ColorizeDesignerRebuild-unsigned.ipa
