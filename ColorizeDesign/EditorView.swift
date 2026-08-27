@@ -1,8 +1,14 @@
 import SwiftUI
 import PhotosUI
 
+enum EditorModule: String, Identifiable {
+    case production, ai, export
+    var id: String { rawValue }
+}
+
 struct EditorView: View {
     @Binding var project: SignProject
+    var onSave: () -> Void = {}
     @State private var selectedID: UUID?
     @State private var showLayers = false
     @State private var showInspector = false
@@ -10,7 +16,12 @@ struct EditorView: View {
     @State private var showGrid = true
     @State private var imagePickerItem: PhotosPickerItem?
     @State private var facadePickerItem: PhotosPickerItem?
-    @State private var facadeImage: UIImage?
+    @State private var module: EditorModule?
+
+    private var facadeImage: UIImage? {
+        guard let data = project.facadeData else { return nil }
+        return UIImage(data: data)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,9 +49,28 @@ struct EditorView: View {
         }
         .navigationTitle(project.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button { module = .ai } label: { Label("AI Designer", systemImage: "sparkles") }
+                    Button { module = .production } label: { Label("Production", systemImage: "wrench.and.screwdriver") }
+                    Button { module = .export } label: { Label("Export", systemImage: "square.and.arrow.up") }
+                    Divider()
+                    Button { duplicateSelected() } label: { Label("Дублировать слой", systemImage: "plus.square.on.square") }
+                } label: { Image(systemName: "ellipsis.circle") }
+            }
+        }
         .sheet(isPresented: $showLayers) { LayersView(project: $project, selectedID: $selectedID) }
         .sheet(isPresented: $showInspector) { InspectorView(project: $project, selectedID: $selectedID) }
         .sheet(isPresented: $showMockup) { FacadeMockupView(facadeImage: facadeImage, project: project) }
+        .sheet(item: $module) { value in
+            switch value {
+            case .production: ProductionView(project: $project)
+            case .ai: AIStudioView(project: $project)
+            case .export: ExportCenterView(project: project)
+            }
+        }
+        .onDisappear { project.modifiedAt = Date(); onSave() }
         .onChange(of: imagePickerItem) { _, newItem in
             guard let newItem else { return }
             Task {
@@ -52,8 +82,8 @@ struct EditorView: View {
         .onChange(of: facadePickerItem) { _, newItem in
             guard let newItem else { return }
             Task {
-                if let data = try? await newItem.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                    await MainActor.run { facadeImage = image; showMockup = true }
+                if let data = try? await newItem.loadTransferable(type: Data.self) {
+                    await MainActor.run { project.facadeData = data; showMockup = true; onSave() }
                 }
             }
         }
@@ -79,7 +109,9 @@ struct EditorView: View {
                 Button { showLayers = true } label: { tool("Слои", "square.3.layers.3d") }
                 Button { showInspector = true } label: { tool("Свойства", "slider.horizontal.3") }
                 Button { showMockup = true } label: { tool("Mockup", "building.2.crop.circle") }
-                Button { } label: { tool("AI", "sparkles") }
+                Button { module = .ai } label: { tool("AI", "sparkles") }
+                Button { module = .production } label: { tool("Производство", "wrench.and.screwdriver") }
+                Button { module = .export } label: { tool("Экспорт", "square.and.arrow.up") }
             }
             .padding(.horizontal, 18)
         }
@@ -93,49 +125,47 @@ struct EditorView: View {
     @ViewBuilder
     private func elementView(_ el: Binding<CanvasElement>, _ size: CGSize) -> some View {
         let e = el.wrappedValue
-        Group {
-            switch e.kind {
-            case .text:
-                Text(e.text.isEmpty ? "Текст" : e.text)
-                    .font(.system(size: max(12, e.fontSize * size.width / 700), weight: .bold))
-                    .foregroundStyle(Color(hex: e.fillHex)).minimumScaleFactor(0.2).lineLimit(2)
-                    .frame(width: max(40, e.width * size.width), height: max(28, e.height * size.height))
-            case .rectangle:
-                RoundedRectangle(cornerRadius: 6).fill(Color(hex: e.fillHex))
-                    .frame(width: max(30, e.width * size.width), height: max(24, e.height * size.height))
-            case .image:
-                if let data = e.imageData, let uiImage = UIImage(data: data) {
-                    Image(uiImage: uiImage).resizable().scaledToFit()
-                        .frame(width: max(40, e.width * size.width), height: max(40, e.height * size.height))
-                } else {
-                    RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.15))
-                        .frame(width: 80, height: 80).overlay(Image(systemName: "photo"))
+        if !e.hidden {
+            Group {
+                switch e.kind {
+                case .text:
+                    Text(e.text.isEmpty ? "Текст" : e.text)
+                        .font(.system(size: max(12, e.fontSize * size.width / 700), weight: .bold))
+                        .foregroundStyle(Color(hex: e.fillHex)).minimumScaleFactor(0.2).lineLimit(2)
+                        .frame(width: max(40, e.width * size.width), height: max(28, e.height * size.height))
+                case .rectangle:
+                    RoundedRectangle(cornerRadius: 6).fill(Color(hex: e.fillHex))
+                        .frame(width: max(30, e.width * size.width), height: max(24, e.height * size.height))
+                case .image:
+                    if let data = e.imageData, let uiImage = UIImage(data: data) {
+                        Image(uiImage: uiImage).resizable().scaledToFit()
+                            .frame(width: max(40, e.width * size.width), height: max(40, e.height * size.height))
+                    }
                 }
             }
-        }
-        .opacity(e.opacity)
-        .scaleEffect(e.scale)
-        .overlay {
-            if selectedID == e.id {
-                RoundedRectangle(cornerRadius: 6).stroke(.blue, style: StrokeStyle(lineWidth: 2, dash: [5]))
+            .opacity(e.opacity)
+            .scaleEffect(e.scale)
+            .overlay {
+                if selectedID == e.id { RoundedRectangle(cornerRadius: 6).stroke(.blue, style: StrokeStyle(lineWidth: 2, dash: [5])) }
             }
+            .position(x: e.x * size.width, y: e.y * size.height)
+            .rotationEffect(.degrees(e.rotation))
+            .gesture(DragGesture().onChanged { value in
+                guard !e.locked else { return }
+                selectedID = e.id
+                el.x.wrappedValue = min(max(value.location.x / size.width, 0), 1)
+                el.y.wrappedValue = min(max(value.location.y / size.height, 0), 1)
+            })
+            .simultaneousGesture(MagnificationGesture().onChanged { value in
+                guard !e.locked else { return }
+                selectedID = e.id; el.scale.wrappedValue = min(max(value, 0.2), 4.0)
+            })
+            .simultaneousGesture(RotationGesture().onChanged { angle in
+                guard !e.locked else { return }
+                selectedID = e.id; el.rotation.wrappedValue = angle.degrees
+            })
+            .onTapGesture { selectedID = e.id }
         }
-        .position(x: e.x * size.width, y: e.y * size.height)
-        .rotationEffect(.degrees(e.rotation))
-        .gesture(DragGesture().onChanged { value in
-            selectedID = e.id
-            el.x.wrappedValue = min(max(value.location.x / size.width, 0), 1)
-            el.y.wrappedValue = min(max(value.location.y / size.height, 0), 1)
-        })
-        .simultaneousGesture(MagnificationGesture().onChanged { value in
-            selectedID = e.id
-            el.scale.wrappedValue = min(max(value, 0.2), 4.0)
-        })
-        .simultaneousGesture(RotationGesture().onChanged { angle in
-            selectedID = e.id
-            el.rotation.wrappedValue = angle.degrees
-        })
-        .onTapGesture { selectedID = e.id }
     }
 
     private func fittedSize(in available: CGSize) -> CGSize {
@@ -148,17 +178,20 @@ struct EditorView: View {
     }
 
     private func addText() {
-        let e = CanvasElement(kind: .text, text: "Новый текст", x: 0.5, y: 0.5, width: 0.45, height: 0.2, fillHex: "#111111", fontSize: 48)
+        let e = CanvasElement(name: "Текст", kind: .text, text: "Новый текст", x: 0.5, y: 0.5, width: 0.45, height: 0.2, fillHex: "#111111", fontSize: 48)
         project.elements.append(e); selectedID = e.id; showInspector = true
     }
-
     private func addRect() {
-        let e = CanvasElement(kind: .rectangle, x: 0.5, y: 0.5, width: 0.3, height: 0.28, fillHex: "#FFCC00")
+        let e = CanvasElement(name: "Фигура", kind: .rectangle, x: 0.5, y: 0.5, width: 0.3, height: 0.28, fillHex: "#FFCC00")
         project.elements.append(e); selectedID = e.id
     }
-
     private func addImage(_ data: Data) {
-        let e = CanvasElement(kind: .image, imageData: data, x: 0.5, y: 0.5, width: 0.45, height: 0.45)
+        let e = CanvasElement(name: "Изображение", kind: .image, imageData: data, x: 0.5, y: 0.5, width: 0.45, height: 0.45)
         project.elements.append(e); selectedID = e.id
+    }
+    private func duplicateSelected() {
+        guard let id = selectedID, let index = project.elements.firstIndex(where: { $0.id == id }) else { return }
+        var copy = project.elements[index]; copy.id = UUID(); copy.x = min(copy.x + 0.04, 0.95); copy.y = min(copy.y + 0.04, 0.95); copy.name += " копия"
+        project.elements.append(copy); selectedID = copy.id
     }
 }
