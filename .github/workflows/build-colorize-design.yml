@@ -1,0 +1,48 @@
+name: Colorize Design IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ colorize-design-v1 ]
+    paths:
+      - 'ColorizeDesign/**'
+      - 'project.yml'
+      - '.github/workflows/build-colorize-design.yml'
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned app
+        run: |
+          xcodebuild \
+            -project ColorizeDesign.xcodeproj \
+            -scheme ColorizeDesign \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Package IPA
+        run: |
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/ColorizeDesign.app Payload/
+          zip -qry ColorizeDesignV1-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ColorizeDesignV1-IPA
+          path: ColorizeDesignV1-unsigned.ipa
